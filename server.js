@@ -10,106 +10,45 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.static("public"));
 
-const users = {};        // nickname -> password
-const online = {};       // nickname -> socketId
-
-const groups = {};       // groupId -> {name, members: []}
-const messages = {};     // groupId -> [{from,text,time,status:{}}]
-
-function genId() {
-    return Math.random().toString(36).substr(2, 9);
-}
+const users = {};   // nickname -> password
+const online = {};  // nickname -> socketId
 
 io.on("connection", (socket) => {
 
     // регистрация
     socket.on("register", ({ nickname, password }) => {
-        if (users[nickname]) return socket.emit("errorMsg", "exists");
+        if (users[nickname]) {
+            socket.emit("authError", "User exists");
+            return;
+        }
 
         users[nickname] = password;
-        socket.emit("ok", "registered");
+        socket.emit("authSuccess", "registered");
     });
 
-    // вход
+    // логин
     socket.on("login", ({ nickname, password }) => {
-        if (users[nickname] !== password)
-            return socket.emit("errorMsg", "wrong");
+        if (users[nickname] !== password) {
+            socket.emit("authError", "Wrong data");
+            return;
+        }
 
         socket.nickname = nickname;
         online[nickname] = socket.id;
 
-        socket.emit("ok", "login");
-        socket.emit("groupsList", Object.values(groups));
+        socket.emit("authSuccess", "login");
     });
 
-    // создать группу
-    socket.on("createGroup", (name) => {
-        const id = genId();
+    // поиск пользователя по нику
+    socket.on("findUser", (nickname) => {
 
-        groups[id] = {
-            id,
-            name,
-            members: [socket.nickname]
-        };
+        const exists = !!users[nickname];
+        const isOnline = !!online[nickname];
 
-        messages[id] = [];
-
-        socket.join(id);
-
-        io.emit("groupsList", Object.values(groups));
-    });
-
-    // вступить в группу
-    socket.on("joinGroup", (groupId) => {
-        const g = groups[groupId];
-        if (!g) return;
-
-        if (!g.members.includes(socket.nickname))
-            g.members.push(socket.nickname);
-
-        socket.join(groupId);
-
-        socket.emit("groupMessages", messages[groupId] || []);
-    });
-
-    // отправка сообщения в группу
-    socket.on("groupMessage", ({ groupId, text }) => {
-
-        const msg = {
-            id: genId(),
-            from: socket.nickname,
-            text,
-            time: Date.now(),
-            status: {
-                sent: true,
-                delivered: false,
-                read: false
-            }
-        };
-
-        if (!messages[groupId]) messages[groupId] = [];
-        messages[groupId].push(msg);
-
-        io.to(groupId).emit("newMessage", {
-            groupId,
-            message: msg
-        });
-    });
-
-    // прочитано
-    socket.on("readMessage", ({ groupId, messageId }) => {
-        const list = messages[groupId];
-        if (!list) return;
-
-        const msg = list.find(m => m.id === messageId);
-        if (!msg) return;
-
-        msg.status.read = true;
-
-        io.to(groupId).emit("messageUpdate", {
-            groupId,
-            messageId,
-            status: msg.status
+        socket.emit("userFound", {
+            nickname,
+            exists,
+            isOnline
         });
     });
 
